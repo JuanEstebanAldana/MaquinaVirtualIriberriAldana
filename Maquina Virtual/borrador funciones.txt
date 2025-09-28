@@ -1,0 +1,54 @@
+ int shr(int reg, char tam, char bits){          
+
+    int mascara = MASK;
+
+    reg >>= bits;                                   //hago corrimiento aritmetico la cantidad de bits que quiero
+
+    for (int i=0; i<bits; i++)                      //cuando i=bits llegue al primer bit que quiero descartar
+        mascara <<= 1;                              //corro la mascara hacia la izq hasta el primer bit que quiero descartar
+
+    mascara ~= mascara;                             //invierto la mascara: a parti de ahora, me va a importar ir corriendo el 0
+
+    for (int i=bits; i<tam; i++){                   //cuando i=TAM_REGISTRO ya recorri todos los bits
+        reg &= mascara;                             //seteo ese bit en 0
+        mascara <<= 1;                              //corro la mascara un lugar hacia la izq
+    }
+
+    return reg;
+}
+
+
+
+SET OP MEMORIA
+        aux_log = (*mv).registros[(operando & 0x001F0000) >> 16];           //DIREC LOG CONTENIDA EN REGISTRO, ANTES DE DESPLAZAMIENTO
+        aux_log_desp = aux_log + (operando & 0x0000FFFF);                 //DIREC LOGICA CON DESPLAZAMIENTO
+
+        if ((aux_log & 0xFFFF0000) == (aux_log_desp & 0xFFFF0000)){
+            carga_LAR_MAR(mv, aux_log_desp, 4);
+            (*mv).registros[2] = valor;
+            if (!(*mv).cod_error)
+                escribe_memoria(mv);
+        }
+        else
+            (*mv).cod_error = SEGFAULT;
+
+
+GET OP MEMORIA
+        case 3: aux_log = (*mv).registros[(operando & 0x001F0000) >> 16];           //DIREC LOG CONTENIDA EN REGISTRO, ANTES DE DESPLAZAMIENTO
+                aux_log_desp = aux_log + (operando & 0x0000FFFF);                     //DIREC LOGICA CON DESPLAZAMIENTO
+/*
+la verificacion se debe a que la funcion log_a_fis toma la dir log ya desplazada, y no sabe el segmento a la que correspondia previo al desp
+lo unico que verifica es si el offset del puntero cae en el segmento del puntero y si el tamaño de acceso esta permitido
+tanto segmento como offset de segmento podrian cambiar por un desplazamiento previo al llamado de la funcion
+*/
+                if ((aux_log & 0xFFFF0000) == (aux_log_desp & 0xFFFF0000)){             //VERIFICO QUE NO ME VAYA DEL SEGMENTO AL HACER EL DESPLAZAMIENTO
+                    carga_LAR_MAR(mv, aux_log_desp, 4);
+                    if (!(*mv).cod_error){
+                        lee_memoria(mv);
+                        valor = (*mv).registros[2];
+                    }
+                }
+                else
+                    (*mv).cod_error = SEGFAULT;
+                break;
+

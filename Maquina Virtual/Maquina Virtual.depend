@@ -1,0 +1,32 @@
+# depslib dependency file v1.0
+1759069296 source:c:\users\marti\onedrive\documentos\facultad\arquitectura de computadoras\maquina virtual\funciones_internas.c
+	<stdio.h>
+	<stdlib.h>
+	"tipos.h"
+	"prototipos.h"
+
+1759069330 c:\users\marti\onedrive\documentos\facultad\arquitectura de computadoras\maquina virtual\tipos.h
+
+1758920743 source:c:\users\marti\onedrive\documentos\facultad\arquitectura de computadoras\maquina virtual\operaciones.c
+	<stdio.h>
+	<stdlib.h>
+	"tipos.h"
+	"prototipos.h"
+	<time.h>
+
+1759064264 c:\users\marti\onedrive\documentos\facultad\arquitectura de computadoras\maquina virtual\prototipos.h
+
+1759022515 source:c:\users\marti\onedrive\documentos\facultad\arquitectura de computadoras\maquina virtual\main.c
+	<stdio.h>
+	<stdlib.h>
+	<string.h>
+	"tipos.h"
+	"prototipos.h"
+
+1759022684 source:c:\users\marti\onedrive\documentos\facultad\arquitectura de computadoras\maquina virtual\disassembler.c
+	<stdio.h>
+	<stdlib.h>
+	<string.h>
+	"tipos.h"
+	"prototipos.h"
+
