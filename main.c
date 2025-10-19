@@ -3,17 +3,20 @@
 #include <string.h>
 #include <time.h>
 
-#define TAM_MEMORIA 16384
+#define MEM_DEFAULT 16384
+#define MAX_PARAMETROS 20
 #define TAM_TABLA 8
+#define CANT_SEGMENTOS 6
 #define CANT_REGISTROS 32
 #define TAM_REGISTRO 32
 #define MASK 1
 #define LONG_ID 6
-#define NOMBRE_ARCH "sample10.vmx"
+#define MAX_ARCH 64
 #define SEGFAULT 1
 #define INVALIDOP 2
 #define DIVZERO 3
-#define CS 0      //provisorio, puede cambiar
+#define MEMINS 4
+#define CS 0
 #define DS 1
 #define OP1 1
 #define OP2 2
@@ -27,6 +30,16 @@
 
 
 //TIPOS
+
+typedef struct {
+    char arch_fuente[MAX_ARCH], arch_img[MAX_ARCH];
+    unsigned int tam_memoria;
+    char d;
+    unsigned short int tam_ps;} TRegComandos;
+
+typedef struct {
+    char identificador[LONG_ID], version;
+    unsigned short int tam_segmentos[TAM_TABLA], offset_entry;} THeaderVMX;
 
 typedef struct {
     unsigned short int base, tam;} TRegTabla;
@@ -216,12 +229,11 @@ int shr(int num, int bits){
 
 void log_a_fis(TMaquinaVirtual *mv, int dir_logica, unsigned int tam_acceso, unsigned short int* dir_fisica){
 
-    unsigned char cod_seg;
-    unsigned short int base_seg;
+    unsigned short int cod_seg, base_seg;
 
     cod_seg = shr(dir_logica, 16);
 
-    if (cod_seg >= TAM_TABLA)
+    if (cod_seg == 0xFFFF)          //cod_seg es -1, no existe el segmento en el proceso
         (*mv).cod_error = SEGFAULT;
     else{
         base_seg = (*mv).tabla_segmentos[cod_seg].base;
@@ -370,7 +382,10 @@ void sys_2(TMaquinaVirtual *mv){
                     switch (j){
                         case 0: printf("%-15d\t", (*mv).registros[2]);
                             break;
-                        case 1: printf("'%-3c\t", (*mv).registros[2]);
+                        case 1: if ((*mv).registros[2] >= 32 && (*mv).registros[2] <= 126)
+                                    printf("'%-3c\t", (*mv).registros[2]);
+                                else
+                                    printf("%-3c\t", '.');
                             break;
                         case 2: printf("0o%-15o\t", (*mv).registros[2]);
                             break;
@@ -582,58 +597,237 @@ void stop(TMaquinaVirtual *mv){
 //MAIN
 
 
-void carga_programa(TMaquinaVirtual *mv, char nom_archivo[]){
+void carga_segmentos(TMaquinaVirtual *mv, THeaderVMX header, TRegComandos comandos){
+
+    int indice_seg=0, aux;
+
+    //verifico si inicializo la tabla con PS
+    if (comandos.tam_ps){
+        (*mv).tabla_segmentos[0].base = 0;
+        (*mv).tabla_segmentos[0].tam = tam_ps;
+        (*mv).registros[31] = 0;
+        indice_seg++;
+    }
+    else
+        (*mv).registros[31] = -1;
+
+    //verifico si agrego a la tabla el KS, y si ademas es el primero en la tabla por no haber PS. El KS es el ultimo en el header pero va antes de CS en la memoria principal
+    if (header.tam_segmentos[4]){
+        (*mv).tabla_segmentos[indice_seg].base = (indice_seg)? (*mv).tabla_segmentos[indice_seg-1].tam : 0;
+        (*mv).tabla_segmentos[indice_seg].tam = header.tam_segmentos[4];
+        aux = indice_seg << 16;
+        (*mv).registros[30] = aux;
+        indice_seg++;
+    }
+    else
+        (*mv).registros[30] = -1;
+
+    //analizo el CS en particular porque puede ser que, a falta de PS y KS, inicialice la tabla
+    (*mv).tabla_segmentos[indice_seg].base = (indice_seg)? (*mv).tabla_segmentos[indice_seg-1].tam : 0;
+    (*mv).tabla_segmentos[indice_seg].tam = header.tam_segmentos[0];
+    aux = indice_seg << 16;
+    (*mv).registros[26] = aux;
+    indice_seg++;
+
+    //analizo los segmentos restantes, a partir del DS que es el segundo especificado en el header, hasta el SE, anteultimo en el header
+    for (int i=1; i < CANT_SEGMENTOS-2; i++)
+        if (header.tam_segmentos[i]){
+            (*mv).tabla_segmentos[indice_seg].base = (*mv).tabla_segmentos[indice_seg-1].tam;
+            (*mv).tabla_segmentos[indice_seg].tam = header.tam_segmentos[i];
+            aux = indice_seg << 16;
+            (*mv).registros[26+i] = aux;
+            indice_seg++;
+        }
+        else
+            (*mv).registros[26+i] = -1;
+}
+
+
+
+int str_a_num(char *str){
+
+    int sum=0, i=0;
+    unsigned char aux;
+
+    while (str[i] != '\0'){
+        aux = str[i] - 48;
+        sum = sum * 10 + aux;
+        i++
+    }
+
+    return sum;
+}
+
+
+int valida_extension(char nombre[], char ext_ref[]){
+
+    char *ext_nombre;
+
+    if (strlen(nombre) < 5)
+        return 0;
+    else{
+        ext_nombre = nombre + strlen(nombre) - strlen(ext_ref);
+        return !strcmp(ext_nombre, ext_ref);
+    }
+}
+
+
+void copia_param_a_mem(char *argv_i, TMaquinaVirtual *mv, unsigned short int *pos_mem){
+
+    for (int i=0; i <= strlen(argv_i); i++){
+        (*mv).memoria[*pos_mem + i] = argv_i[i];
+        (*pos_mem)++;
+    }
+}
+
+
+void carga_ps(int argc, char *argv[], int i, TRegComandos *comandos, TMaquinaVirtual *mv){
+
+    unsigned int vec_punt_param[MAX_PARAMETROS];
+    unsigned char cont_vec = 0;
+    unsigned short int pos_mem = 0;
+
+    while (i < argc){
+        vec_punt_param[cont_vec] = 0x0000;
+        vec_punt_param[cont_vec] <<= 16;
+        vec_punt_param[cont_vec] += pos_mem;
+        for (int j=0; j <= strlen(argv[i]); j++){
+            (*mv).memoria[pos_mem + j] = argv[i][j];
+            pos_mem++;
+        }
+        cont_vec++;
+        i++;
+    }
+    for (int k=0; k < cont_vec; k++){
+        (*mv).memoria[pos_mem] = vec_punt_param[k];
+        pos_mem += 4;
+    }
+
+    (*comandos).tam_ps = pos_mem;
+}
+
+
+void procesa_comandos(int argc, char *argv[], TRegComandos *comandos, TMaquinaVirtual *mv){
+
+    int i=0;
+
+    if (argc > 1)
+        if (valida_extension(argv[1], ".vmx")){
+            strcpy((*comandos).arch_fuente, argv[1]);
+            if (argc > 2 && valida_extension(argv[2], ".vmi")){
+                strcpy((*comandos).arch_img, argv[2]);
+                i = 3;
+            }
+            else{
+                strcpy((*comandos).arch_img, "");
+                i = 2;
+            }
+        }
+        else{
+            strcpy((*comandos).arch_fuente, "");
+            if (valida_extension(argv[1], ".vmi")){
+                strcpy((*comandos).arch_img, argv[1]);
+                i = 2;
+            }
+            else
+                printf("No existe archivo .vmx ni .vmi: la ejecucion no se puede llevar a cabo.");
+        }
+    else
+        printf("No existe archivo .vmx ni .vmi: la ejecucion no se puede llevar a cabo.");
+
+    if (i){
+        if (i < argc && !strncmp(argv[i], "m=", 2)){
+            (*comandos).tam_memoria = str_a_num(argv[i]+2) * 1024;
+            i++;
+        }
+        else
+            (*comandos).tam_memoria = MEM_DEFAULT;
+        if (i < argc && !strcmp(argv[i], "-d")){
+            (*comandos).d = 1;
+            i++;
+        }
+        else
+            (*comandos).d = 0;
+        if (i < argc && !strcmp(argv[i], "-p") && strlen((*comandos).arch_fuente)){
+            i++;
+            carga_ps(argc, argv, i, mv, comandos);
+        }
+        else
+            (*comandos).tam_ps = 0;
+    }
+}
+
+
+
+void carga_programa(TMaquinaVirtual *mv, TRegComandos comandos){
 
     FILE *arch;
-    unsigned short int celda=0;
-    char byte, identificador[LONG_ID], version;
-    unsigned char tam_aux;
-    short int tam_codigo;
+    unsigned short int celda=0, tam;
+    char byte;
+    unsigned char tam_aux, i;
+    THeaderVMX header;
+    int sum_tam=0;
 
-    arch = fopen(nom_archivo, "rb");
+    arch = fopen(comandos.arch_fuente, "rb");
     if (arch == NULL){
         printf("El archivo ejecutable no existe.\n");
         (*mv).registros[3] = -1;
     }
     else{
-        fread(identificador, sizeof(identificador)-1, 1, arch);
-        identificador[LONG_ID-1] = '\0';
-        fread(&version, sizeof(version), 1, arch);
-        fread(&tam_codigo, 1, 1, arch);
-        tam_codigo <<= 8;
+        fread(header.identificador, sizeof(header.identificador)-1, 1, arch);
+        header.identificador[LONG_ID-1] = '\0';
+        fread(&header.version, sizeof(header.version), 1, arch);
+        fread(&tam, 1, 1, arch);
+        tam <<= 8;
         fread(&tam_aux, 1, 1, arch);
-        tam_codigo |= tam_aux;
+        tam |= tam_aux;
+        header.tam_segmentos[0] = tam;
+        sum_tam += tam;
+        if (header.version == 2){
+            i = 1;
+            while (i < CANT_SEGMENTOS-1){
+                fread(&tam, 1, 1, arch);
+                tam <<= 8;
+                fread(&tam_aux, 1, 1, arch);
+                tam |= tam_aux;
+                header.tam_segmentos[i++] = tam;
+                sum_tam += tam;
+            }
+            fread(&header.offset_entry, sizeof(header.offset_entry), 1, arch);
+        }
 
-        if (!strcmp(identificador, "VMX25") && version == 1 && tam_codigo <= TAM_MEMORIA){
+        if (!strcmp(identificador, "VMX25") && sum_tam <= TAM_MEMORIA)){
             //carga codigo a memoria
             fread(&byte, sizeof(char), 1, arch);
-            while (!feof(arch)){
+            while (!feof(arch) && celda < header.tam_segmentos[0]){
                 (*mv).memoria[celda++] = byte;
                 fread(&byte, sizeof(char), 1, arch);
             }
 
-            //carga tabla de segmentos
-            (*mv).tabla_segmentos[CS].base = 0;
-            (*mv).tabla_segmentos[CS].tam = tam_codigo;
-            (*mv).tabla_segmentos[DS].base = tam_codigo;
-            (*mv).tabla_segmentos[DS].tam = TAM_MEMORIA - tam_codigo;
+
+            //FUNCION CARGA CONST
+
+
+            carga_segmentos(mv, header, comandos);
 
             //inicializa registros en general
-            for (int i=0; i<CANT_REGISTROS; i++)
+            for (int i=0; i<26; i++)
                 (*mv).registros[i] = 0;
 
-            (*mv).registros[26] = CS << 16;     //registro CS
-            (*mv).registros[27] = DS << 16;     //registro DS
-            (*mv).registros[3] = (*mv).registros[26];   //registro IP
 
+            (*mv).registros[3] = (*mv).registros[26] + header.offset_entry;   //registro IP
+
+            (*mv).cod_error = 0;
         }
-        else{
-            printf("El archivo ejecutable es invalido.\n");
-            (*mv).registros[3] = -1;
-        }
+        else
+            if (sum_tam > TAM_MEMORIA)
+                (*mv).cod_error = MEMINS;
+            else{
+                printf("El archivo ejecutable es invalido.\n");
+                (*mv).registros[3] = -1;
+            }
         fclose(arch);
     }
-    (*mv).cod_error = 0;
 }
 
 
@@ -701,7 +895,7 @@ void carga_operaciones_y_mnemonicos(TRegOp operaciones[]){
 }
 
 
-int main(){
+int main(int argc, char *argv[]){
 
     TMaquinaVirtual maquina_virtual;
     unsigned short int dir_fisica_instruccion;
