@@ -201,6 +201,29 @@ int get(TMaquinaVirtual *mv, char selec_operando){
 }
 
 
+int transformador(int valor, int tamorigen, int tamobj) {
+    int mascara = 0, i, byte = 0xFF,mascsign;
+    if (tamorigen > tamobj) {
+        for (i = 0; i < tamobj; i++)
+            mascara |= (byte << (8 * i));
+        return valor & mascara;
+    }
+    else{
+        if (tamorigen < tamobj)
+            mascsign = 1 << (tamorigen * 8 - 1);
+        if (valor & mascsign) {
+            for (i = tamorigen; i < tamobj; i++)
+                mascara |= (byte << (8 * i));
+            return valor | mascara;
+        }
+        else {
+            return valor;
+        }
+    }
+    else
+        return valor;
+}
+
 
 
 void cc(TMaquinaVirtual *mv, int num){
@@ -408,8 +431,6 @@ void sys_2(TMaquinaVirtual *mv){
 
 
 
-
-
 //OPERACIONES
 
 void mov(TMaquinaVirtual *mv){
@@ -588,9 +609,49 @@ void stop(TMaquinaVirtual *mv){
     (*mv).registros[3] = -1;
 }
 
+void push(TMaquinaVirtual *mv){
+    int valor,i,dirfis;
+    mv->registros[7]-=4;
+    if (mv->registros[7]<mv->tabla_segmentos[mv->registros[29]].base)
+        mv->cod_error=5;//STACK OVERFLOW
+    else{
+        valor=get(mv->registros[5]);//HAY QUE MODIFICAR GET, PARA QUE EXTIENDA SIGNO CUANDO LOS REGISTROS NO SON COMPLETOS, get y set van a tener que llamar al transformador
+        dirfis=mv->tabla_segmentos[mv->registros[7]>>16].base + mv->registros[7] & 0x0000FFFF;//EL SP ES UN PUNETERO, LO TRANSFORMO A FISICA LOCALMENTE PORQUE POP Y PUSH NO MODIFICAN LAR Y MAR
+        for (i=0;i<4; mv->memoria[dirfis-i] = valor << (8*i))
+        ;
+    }
+}
 
+void pop(TMaquinaVirtual *mv){
+    int valor,i,dirfis;
+    mv->registros[7]+=4;
+    if ((mv->tabla_segmentos[mv->registros[29]].base + mv->tabla_segmentos[mv->registros[29]].tam - (mv->registros[7] & 0x0000FFFF + mv->tabla_segmentos[mv->registros[29]].base)) < 4)
+        mv->cod_error=4;//STACK UNDERFLOW
+    else{
+        valor=0;
+        dirfis=mv->tabla_segmentos[mv->registros[7]>>16].base + mv->registros[7] & 0x0000FFFF;
+        for (i=0;i<4;valor=(valor<<8)+mv->memoria[dirfis-i])
+        ;
+        set(mv,valor);
+    }
+}
 
-
+void call(TMaquinaVirtual *mv){
+    int aux;
+    aux=mv->registros[5];
+    mv->registros[5]=mv->registros[3];
+    push(mv)
+    mv->registros[5]=aux;
+    jmp(mv);
+}
+//LA CONSTRUCCION DE ESTOS DOS UTILIZA UN AUXILIAR YA QUE PASA PODER USAR POP Y PUSH HAY QUE PRECISAR DEL OP1, LO QUE GENERA LA NECESIDAD DE SALVAGUARDAR EL VERDADERO OP1, PARA QUE NO SE MODIFIQUE
+void ret(TMaquinaVirtual *mv){
+    int aux;
+    aux=mv->registros[5];
+    mv->registros[5]=0x01000003;
+    pop(mv);
+    mv->registros[5]=aux;
+}
 
 
 
