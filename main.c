@@ -175,28 +175,50 @@ void set(TMaquinaVirtual *mv, int valor){
 int get(TMaquinaVirtual *mv, char selec_operando){
 
     int operando, valor;
-    char tipo;
+    char tipo,subtipo;
 
-    operando = (*mv).registros[4+selec_operando];
+    operando = mv->registros[4+selec_operando];
     tipo = shr(operando & 0xFF000000, 24);
 
     switch (tipo){
-        case 1: valor = (*mv).registros[operando & 0x1F];
+        case 1: subtipo = operando & 0b11000000;
+                valor = mv->registros[operando &= 0x1F];
+                switch (subtipo){
+                    case 0b01000000: valor =  transformador (valor & 0x000000FF,1,4);
+                    break;
+                    case 0b10000000: valor = transformador((valor & 0x0000FF00)>>8,1,4);
+                    break;
+                    case 0b11000000: valor = transformador(valor & 0x0000FFFF,2,4);
+                    break;
+                }
                 break;
 
         case 2: valor = operando;
-                valor <<= 16;
-                valor >>= 16;           //para retener el signo si es negativo
+                valor=transformador(valor,2,4);
+                //valor <<= 16;
+                //valor >>= 16;
                 break;
 
-        case 3: carga_LAR_MAR(mv, (*mv).registros[(operando & 0x001F0000) >> 16] + (operando & 0x0000FFFF), 4);
-                if (!(*mv).cod_error){
-                    lee_memoria(mv);
-                    valor = (*mv).registros[2];
+        case 3: subtipo = operando & 0xC00000;
+                switch (subtipo){
+                    case 0x000000: carga_LAR_MAR(mv, mv->registros[(operando & 0x001F0000) >> 16] + (operando & 0x0000FFFF), 4);
+                    break;
+                    case 0x800000: carga_LAR_MAR(mv, mv->registros[(operando & 0x001F0000) >> 16] + (operando & 0x0000FFFF), 2);
+                    break;
+                    case 0xC00000: carga_LAR_MAR(mv, mv->registros[(operando & 0x001F0000) >> 16] + (operando & 0x0000FFFF), 1);
+                    break;
+
                 }
+                if (! mv->cod_error){
+                    lee_memoria(mv);
+                    valor = mv->registros[2];
+                }
+                if (subtipo == 0x800000)
+                    valor=transformador(valor,2,4);
+                if (subtipo == 0xC00000)
+                    valor=transformador(valor,1,4);
                 break;
     }
-
     return valor;
 }
 
