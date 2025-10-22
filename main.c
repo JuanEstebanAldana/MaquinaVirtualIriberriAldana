@@ -610,27 +610,31 @@ void stop(TMaquinaVirtual *mv){
 }
 
 void push(TMaquinaVirtual *mv){
-    int valor,i,dirfis;
-    mv->registros[7]-=4;
-    if (mv->registros[7]<mv->tabla_segmentos[mv->registros[29]].base)
+    int valor,i/*,dirfis*/;
+    mv->registros[7]-=4;//1)DECREMENTA EL VALOR DEL SP EN 4
+    if (mv->registros[7]<mv->tabla_segmentos[mv->registros[29]].base)//2)VERIFICA SI HAY ERROR
         mv->cod_error=5;//STACK OVERFLOW
     else{
-        valor=get(mv->registros[5]);//HAY QUE MODIFICAR GET, PARA QUE EXTIENDA SIGNO CUANDO LOS REGISTROS NO SON COMPLETOS, get y set van a tener que llamar al transformador
-        dirfis=mv->tabla_segmentos[mv->registros[7]>>16].base + mv->registros[7] & 0x0000FFFF;//EL SP ES UN PUNETERO, LO TRANSFORMO A FISICA LOCALMENTE PORQUE POP Y PUSH NO MODIFICAN LAR Y MAR
-        for (i=0;i<4; mv->memoria[dirfis-i] = valor << (8*i))
+        valor=get(mv->registros[5]);//3,4)OBTIENE EL VALOR DEL OPERANDO, GET TRANSFORMA A 4 BYTES
+        carga_LAR_MAR(mv,mv->registros[7],4);
+        //dirfis=mv->tabla_segmentos[mv->registros[7]>>16].base + mv->registros[7] & 0x0000FFFF;//EL SP ES UN PUNETERO, LO TRANSFORMO A FISICA LOCALMENTE PORQUE POP Y PUSH NO MODIFICAN LAR Y MAR
+        for (i=0;i<4; mv->memoria[mv->registros[1]+4-i] = ((char)(valor >> (8*i))))
+            i++;
         ;
     }
 }
 
 void pop(TMaquinaVirtual *mv){
-    int valor,i,dirfis;
+    int valor,i/*,dirfis*/;
     mv->registros[7]+=4;
     if ((mv->tabla_segmentos[mv->registros[29]].base + mv->tabla_segmentos[mv->registros[29]].tam - (mv->registros[7] & 0x0000FFFF + mv->tabla_segmentos[mv->registros[29]].base)) < 4)
         mv->cod_error=4;//STACK UNDERFLOW
     else{
         valor=0;
-        dirfis=mv->tabla_segmentos[mv->registros[7]>>16].base + mv->registros[7] & 0x0000FFFF;
-        for (i=0;i<4;valor=(valor<<8)+mv->memoria[dirfis-i])
+        carga_LAR_MAR(mv,mv->registros[7],4);
+        //dirfis=mv->tabla_segmentos[mv->registros[7]>>16].base + mv->registros[7] & 0x0000FFFF;
+        for (i=0;i<4;valor=(valor<<8)+mv->memoria[mv->registros[1]+4-i])//LOS VALORES DEL MAR Y EL LAR DEBEN SER ACTUALIZADOS SEGUN LA CELDA QUE SE LEVANTA O ESCRIBE???
+            i++;
         ;
         set(mv,valor);
     }
@@ -644,6 +648,7 @@ void call(TMaquinaVirtual *mv){
     mv->registros[5]=aux;
     jmp(mv);
 }
+//ESTO ES TEORICAMENTE CUESTIONABLE PERO DESDE LA PROGRAMACION ES AMPIAMENTE MAS SENCILLO
 //LA CONSTRUCCION DE ESTOS DOS UTILIZA UN AUXILIAR YA QUE PASA PODER USAR POP Y PUSH HAY QUE PRECISAR DEL OP1, LO QUE GENERA LA NECESIDAD DE SALVAGUARDAR EL VERDADERO OP1, PARA QUE NO SE MODIFIQUE
 void ret(TMaquinaVirtual *mv){
     int aux;
