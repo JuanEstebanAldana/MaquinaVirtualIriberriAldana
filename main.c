@@ -653,7 +653,7 @@ void call(TMaquinaVirtual *mv){
 void ret(TMaquinaVirtual *mv){
     int aux;
     aux=mv->registros[5];
-    mv->registros[5]=0x01000003;
+    mv->registros[5]=0x01000003;//EN EL OPERANDO 1 COLOCA EL REGISTRO IP CON LA INTENCION QUE EL POP LO ACTUALICE Y LUEGO DEVUELVE AL OP1 LO QUE TIENE QUE SER CON EL AUX
     pop(mv);
     mv->registros[5]=aux;
 }
@@ -931,6 +931,10 @@ void carga_operaciones_y_mnemonicos(TRegOp operaciones[]){
     operaciones[7].funcion = &jnn;
     operaciones[8].funcion = &not;
     operaciones[15].funcion = &stop;
+    operaciones[10].funcion = &push;
+    operaciones[11].funcion = &pop;
+    operaciones[12].funcion = &call;
+    operaciones[13].funcion = &ret;
     //carga mnemonicos
     strcpy(operaciones[16].nombre, "MOV");
     strcpy(operaciones[17].nombre, "ADD");
@@ -958,6 +962,10 @@ void carga_operaciones_y_mnemonicos(TRegOp operaciones[]){
     strcpy(operaciones[7].nombre, "JNN");
     strcpy(operaciones[8].nombre, "NOT");
     strcpy(operaciones[15].nombre, "STOP");
+    strcpy(operaciones[10].nombre, "PUSH");
+    strcpy(operaciones[11].nombre, "POP");
+    strcpy(operaciones[12].nombre, "CALL");
+    strcpy(operaciones[13].nombre, "RET");
 }
 
 
