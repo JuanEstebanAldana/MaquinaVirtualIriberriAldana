@@ -573,25 +573,51 @@ void swap(TMaquinaVirtual *mv){
 void ldl(TMaquinaVirtual *mv){
 
     int aux_op1, aux_op2;
+    char tipo, subtipo;
 
     aux_op1 = get(mv, OP1);
     aux_op2 = get(mv, OP2);
-    aux_op1 &= 0xFFFF0000;
-    aux_op2 &= 0xFFFF;
-    aux_op1 |= aux_op2;
-    set(mv, aux_op1);
+    tipo = (mv->registros[5] & 0xFF000000)>>24;
+    if (tipo == 1){
+        subtipo = (mv->registros[5] & 0b11000000)>>6;
+        switch (subtipo){
+            case 1: aux_op1 &= 0xFFFFFF00;
+                    aux_op2 &= 0x000000FF;
+                break;
+            case 2: aux_op1 &= 0xFFFF00FF;
+                    aux_op2 &= 0x000000FF;
+                    aux_op2 <<= 8;
+                break;
+            default: aux_op1 &= 0xFFFF0000;
+                     aux_op2 &= 0x0000FFFF;
+                break;//el caso default es para la carga de ax o de eax, que a efecto practicos son lo mismo para ldl
+        }
+        aux_op1 |= aux_op2;
+        set(mv, aux_op1);
+    }
+    else{
+        if ((mv->registros[5] & 0xC00000)>>22 == 0){//el ldl en memoria solo se realiza con modificador l o sin modificador, 4 celdas
+            aux_op1 &= 0xFFFF0000;
+            aux_op2 &= 0x0000FFFF;
+            aux_op1 |= aux_op2;
+            set(mv, aux_op1);
+        }
+    }
 }
 
-void ldh(TMaquinaVirtual *mv){
+
+void ldh(TMaquinaVirtual *mv){//PARA LDH, SOLO SE CARGAN COSAS SI SE TRATA DE UN REGISTRO ENTERO O UNA CELDA DE MEMORIA DE 4, POR LO QUE SOLO ES NECESARIO VERIFICAR SI ESTA CONDICION SE DA.
 
     int aux_op1, aux_op2;
 
-    aux_op1 = get(mv, OP1);
-    aux_op2 = get(mv, OP2);
-    aux_op1 &= 0xFFFF;
-    aux_op2 <<= 16;
-    aux_op1 |= aux_op2;
-    set(mv, aux_op1);
+    if (((mv->registros[5] & 0x01000000) && (mv->registros[5] & 0b11000000 == 0)) || ((mv->registros[5] & 0x03000000) && (mv->registros[5] & 0x110000 == 0))){//uso mascaras invertidas
+        aux_op1 = get(mv, OP1);
+        aux_op2 = get(mv, OP2);
+        aux_op1 &= 0xFFFF;
+        aux_op2 <<= 16;
+        aux_op1 |= aux_op2;
+        set(mv, aux_op1);
+    }
 }
 
 void rnd(TMaquinaVirtual *mv){
