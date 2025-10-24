@@ -15,6 +15,8 @@
 #define SEGFAULT 1
 #define INVALIDOP 2
 #define DIVZERO 3
+#define STACKUNDERFLOW 4
+#define STACKOVERFLOW 5
 #define MEMINS 4
 #define CS 0
 #define DS 1
@@ -32,7 +34,7 @@
 //TIPOS
 
 typedef struct {
-    char arch_fuente[MAX_ARCH], arch_img[MAX_ARCH];
+    char arch_fuente[MAX_ARCH], arch_img[MAX_ARCH]="0";//INICIALIZO EN 0 PARA VERIFICAR EN SYS F
     unsigned int tam_memoria;
     char d;
     unsigned short int tam_ps;} TRegComandos;
@@ -48,7 +50,8 @@ typedef struct {
     char memoria[TAM_MEMORIA];
     TRegTabla tabla_segmentos[TAM_TABLA];
     int registros[CANT_REGISTROS];
-    char cod_error;} TMaquinaVirtual;           //provisoriamente segmentation error es codigo=1
+    char cod_error;//provisoriamente segmentation error es codigo=1
+    int debugger=0;} TMaquinaVirtual;
 
 typedef void (*ptro_func)(TMaquinaVirtual*);
 
@@ -467,9 +470,61 @@ void sys_2(TMaquinaVirtual *mv){
     printf("\n");
 }
 
+void sys_3 (TMaquinaVirtual *mv){
 
+    int i;
 
+    for (i=0;i<mv->registros[12]-1;i++){
+        carga_LAR_MAR(mv, mv->registros[13],1);
+        if (!mv->cod_error){
+            scanf("%c",&mv->registros[2]);
+            escribe_memoria(mv);
+            mv->registros[1]++;
+        }
+    }
+    if (!mv->cod_error){
+        carga_LAR_MAR(mv,++mv->registros[13],1);
+        mv->registros[2]='\0';
+        escribe_memoria(mv);
+    }
+}
 
+void sys_4 (TMaquinaVirtual *mv){
+
+    carga_LAR_MAR(mv, mv->registros[13],1)
+    lee_memoria(mv);
+    while (!mv->cod_error && mv->registros[2]!='\0'){
+        if (mv->registros[2]!='\n')
+            printf("%c",mv->registros[2]);
+        else
+            printf("\n");
+        carga_LAR_MAR(mv, ++mv->registros[13],1);
+        lee_memoria(mv);
+    }
+}
+
+void sys_7 (TMaquinaVirtual *mv){
+
+    system("cls");
+}
+
+void sys_F (TMaquinaVirtual *mv, TRegComandos Comandos){
+
+    char aux='x';
+
+    if (strcmp(Comandos.arch_img,"0")!=0){//SE CARGO UN VMI
+        while (aux !='g' && aux !='q' && aux !='\n')
+            scanf("%c",&aux);
+        switch(aux){
+            case 'g':   mv->debugger=0;
+                        break;
+            case 'q':   mv->registros[3]=-1;
+                        break;
+            case '\n':  mv->debugger=1;
+                        break;
+        }
+    }
+}
 
 //OPERACIONES
 
@@ -679,7 +734,7 @@ void push(TMaquinaVirtual *mv){
     int valor,i/*,dirfis*/;
     mv->registros[7]-=4;//1)DECREMENTA EL VALOR DEL SP EN 4
     if (mv->registros[7]<mv->tabla_segmentos[mv->registros[29]].base)//2)VERIFICA SI HAY ERROR
-        mv->cod_error=5;//STACK OVERFLOW
+        mv->cod_error=STACKOVERFLOW;//STACK OVERFLOW
     else{
         valor=get(mv->registros[5]);//3,4)OBTIENE EL VALOR DEL OPERANDO, GET TRANSFORMA A 4 BYTES
         carga_LAR_MAR(mv,mv->registros[7],4);
@@ -694,7 +749,7 @@ void pop(TMaquinaVirtual *mv){
     int valor,i/*,dirfis*/;
     mv->registros[7]+=4;
     if ((mv->tabla_segmentos[mv->registros[29]].base + mv->tabla_segmentos[mv->registros[29]].tam - (mv->registros[7] & 0x0000FFFF + mv->tabla_segmentos[mv->registros[29]].base)) < 4)
-        mv->cod_error=4;//STACK UNDERFLOW
+        mv->cod_error=STACKUNDERFLOW;//STACK UNDERFLOW
     else{
         valor=0;
         carga_LAR_MAR(mv,mv->registros[7],4);
@@ -1100,6 +1155,8 @@ int main(int argc, char *argv[]){
                 maquina_virtual.registros[3] = -1;
                 maquina_virtual.cod_error = 0;
             }
+            if (maquina_virtual.debugger)
+                sys_7(*mv);
         }
         else{
             maquina_virtual.registros[3] = -1;
@@ -1109,12 +1166,16 @@ int main(int argc, char *argv[]){
 
     //si hay error imprime
     switch (maquina_virtual.cod_error){
-        case SEGFAULT:  printf("\nSEGMENTATION FAULT\n");
-                        break;
-        case INVALIDOP: printf("\nINVALID OPERATION\n");
-                        break;
-        case DIVZERO:   printf("\nDIVISION BY ZERO\n");
-                        break;
+        case SEGFAULT:          printf("\nSEGMENTATION FAULT\n");
+                                break;
+        case INVALIDOP:         printf("\nINVALID OPERATION\n");
+                                break;
+        case DIVZERO:           printf("\nDIVISION BY ZERO\n");
+                                break;
+        case STACKUNDERFLOW:    printf("\nSTACK UNDERFLOW\n");
+                                break;
+        case STACKOVERFLOW:     printf("\nSTACK OVERFLOW\n");
+                                break;
     }
 
     printf("\n");
