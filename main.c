@@ -156,17 +156,35 @@ void carga_nombres_registros(nombre_r nom_reg[]){
 void set(TMaquinaVirtual *mv, int valor){
 
     int operando;
-    char tipo;
+    char tipo,subtipo;
 
-    operando = (*mv).registros[5];
+    operando = mv->registros[5];
     tipo = shr(operando & 0xFF000000, 24);
 
-    if (tipo == 1)
-        (*mv).registros[operando & 0x1F] = valor;
+    if (tipo == 1){
+        subtipo = operando & 0b11000000;
+        switch(subtipo){
+            case 0b00000000: mv->registros[operando & 0x1F] = valor;
+            break;
+            case 0b01000000: mv->registros[operando & 0x1F] = (mv->registros[operando & 0x1F] & 0xFFFFFF00) | valor & 0x000000FF;
+            break;
+            case 0b10000000: mv->registros[operando & 0x1F] = (mv->registros[operando & 0x1F] & 0xFFFF00FF) | valor & 0x000000FF;
+            break;
+            case 0b11000000: mv->registros[operando & 0x1F] = (mv->registros[operando & 0x1F] & 0xFFFF0000) | valor & 0x0000FFFF;
+            break;
+    }
     else{
-        carga_LAR_MAR(mv, (*mv).registros[(operando & 0x001F0000) >> 16] + (operando & 0x0000FFFF), 4);
-        (*mv).registros[2] = valor;
-        if (!(*mv).cod_error)
+        subtipo = operando & 0xC00000;
+        switch (subtipo){
+            case 0x000000: carga_LAR_MAR(mv, mv->registros[(operando & 0x001F0000) >> 16] + (operando & 0x0000FFFF), 4);
+            break;
+            case 0x800000: carga_LAR_MAR(mv, mv->registros[(operando & 0x001F0000) >> 16] + (operando & 0x0000FFFF), 2);
+            break;
+            case 0xC00000: carga_LAR_MAR(mv, mv->registros[(operando & 0x001F0000) >> 16] + (operando & 0x0000FFFF), 1);
+            break;
+        }
+        mv->registros[2] = valor;
+        if (! mv->cod_error)
             escribe_memoria(mv);
     }
 }
@@ -175,31 +193,76 @@ void set(TMaquinaVirtual *mv, int valor){
 int get(TMaquinaVirtual *mv, char selec_operando){
 
     int operando, valor;
-    char tipo;
+    char tipo,subtipo;
 
-    operando = (*mv).registros[4+selec_operando];
+    operando = mv->registros[4+selec_operando];
     tipo = shr(operando & 0xFF000000, 24);
 
     switch (tipo){
-        case 1: valor = (*mv).registros[operando & 0x1F];
+        case 1: subtipo = operando & 0b11000000;
+                valor = mv->registros[operando &= 0x1F];
+                switch (subtipo){
+                    case 0b01000000: valor =  transformador (valor & 0x000000FF,1,4);
+                    break;
+                    case 0b10000000: valor = transformador((valor & 0x0000FF00)>>8,1,4);
+                    break;
+                    case 0b11000000: valor = transformador(valor & 0x0000FFFF,2,4);
+                    break;
+                }
                 break;
 
         case 2: valor = operando;
-                valor <<= 16;
-                valor >>= 16;           //para retener el signo si es negativo
+                valor=transformador(valor,2,4);
+                //valor <<= 16;
+                //valor >>= 16;
                 break;
 
-        case 3: carga_LAR_MAR(mv, (*mv).registros[(operando & 0x001F0000) >> 16] + (operando & 0x0000FFFF), 4);
-                if (!(*mv).cod_error){
+        case 3: subtipo = operando & 0xC00000;
+                switch (subtipo){
+                    case 0x000000: carga_LAR_MAR(mv, mv->registros[(operando & 0x001F0000) >> 16] + (operando & 0x0000FFFF), 4);
+                    break;
+                    case 0x800000: carga_LAR_MAR(mv, mv->registros[(operando & 0x001F0000) >> 16] + (operando & 0x0000FFFF), 2);
+                    break;
+                    case 0xC00000: carga_LAR_MAR(mv, mv->registros[(operando & 0x001F0000) >> 16] + (operando & 0x0000FFFF), 1);
+                    break;
+
+                }
+                if (! mv->cod_error){
                     lee_memoria(mv);
-                    valor = (*mv).registros[2];
+                    valor = mv->registros[2];
+                    if (subtipo == 0x800000)
+                        valor=transformador(valor,2,4);
+                    if (subtipo == 0xC00000)
+                        valor=transformador(valor,1,4);
                 }
                 break;
     }
-
     return valor;
 }
 
+
+int transformador(int valor, int tamorigen, int tamobj) {
+    int mascara = 0, i, byte = 0xFF,mascsign;
+    if (tamorigen > tamobj) {
+        for (i = 0; i < tamobj; i++)
+            mascara |= (byte << (8 * i));
+        return valor & mascara;
+    }
+    else{
+        if (tamorigen < tamobj)
+            mascsign = 1 << (tamorigen * 8 - 1);
+        if (valor & mascsign) {
+            for (i = tamorigen; i < tamobj; i++)
+                mascara |= (byte << (8 * i));
+            return valor | mascara;
+        }
+        else {
+            return valor;
+        }
+    }
+    else
+        return valor;
+}
 
 
 
@@ -408,8 +471,6 @@ void sys_2(TMaquinaVirtual *mv){
 
 
 
-
-
 //OPERACIONES
 
 void mov(TMaquinaVirtual *mv){
@@ -588,9 +649,54 @@ void stop(TMaquinaVirtual *mv){
     (*mv).registros[3] = -1;
 }
 
+void push(TMaquinaVirtual *mv){
+    int valor,i/*,dirfis*/;
+    mv->registros[7]-=4;//1)DECREMENTA EL VALOR DEL SP EN 4
+    if (mv->registros[7]<mv->tabla_segmentos[mv->registros[29]].base)//2)VERIFICA SI HAY ERROR
+        mv->cod_error=5;//STACK OVERFLOW
+    else{
+        valor=get(mv->registros[5]);//3,4)OBTIENE EL VALOR DEL OPERANDO, GET TRANSFORMA A 4 BYTES
+        carga_LAR_MAR(mv,mv->registros[7],4);
+        //dirfis=mv->tabla_segmentos[mv->registros[7]>>16].base + mv->registros[7] & 0x0000FFFF;//EL SP ES UN PUNETERO, LO TRANSFORMO A FISICA LOCALMENTE PORQUE POP Y PUSH NO MODIFICAN LAR Y MAR
+        for (i=0;i<4; mv->memoria[mv->registros[1]+4-i] = ((char)(valor >> (8*i))))
+            i++;
+        ;
+    }
+}
 
+void pop(TMaquinaVirtual *mv){
+    int valor,i/*,dirfis*/;
+    mv->registros[7]+=4;
+    if ((mv->tabla_segmentos[mv->registros[29]].base + mv->tabla_segmentos[mv->registros[29]].tam - (mv->registros[7] & 0x0000FFFF + mv->tabla_segmentos[mv->registros[29]].base)) < 4)
+        mv->cod_error=4;//STACK UNDERFLOW
+    else{
+        valor=0;
+        carga_LAR_MAR(mv,mv->registros[7],4);
+        //dirfis=mv->tabla_segmentos[mv->registros[7]>>16].base + mv->registros[7] & 0x0000FFFF;
+        for (i=0;i<4;valor=(valor<<8)+mv->memoria[mv->registros[1]+4-i])//LOS VALORES DEL MAR Y EL LAR DEBEN SER ACTUALIZADOS SEGUN LA CELDA QUE SE LEVANTA O ESCRIBE???
+            i++;
+        ;
+        set(mv,valor);
+    }
+}
 
-
+void call(TMaquinaVirtual *mv){
+    int aux;
+    aux=mv->registros[5];
+    mv->registros[5]=mv->registros[3];
+    push(mv)
+    mv->registros[5]=aux;
+    jmp(mv);
+}
+//ESTO ES TEORICAMENTE CUESTIONABLE PERO DESDE LA PROGRAMACION ES AMPIAMENTE MAS SENCILLO
+//LA CONSTRUCCION DE ESTOS DOS UTILIZA UN AUXILIAR YA QUE PASA PODER USAR POP Y PUSH HAY QUE PRECISAR DEL OP1, LO QUE GENERA LA NECESIDAD DE SALVAGUARDAR EL VERDADERO OP1, PARA QUE NO SE MODIFIQUE
+void ret(TMaquinaVirtual *mv){
+    int aux;
+    aux=mv->registros[5];
+    mv->registros[5]=0x01000003;//EN EL OPERANDO 1 COLOCA EL REGISTRO IP CON LA INTENCION QUE EL POP LO ACTUALICE Y LUEGO DEVUELVE AL OP1 LO QUE TIENE QUE SER CON EL AUX
+    pop(mv);
+    mv->registros[5]=aux;
+}
 
 
 
@@ -865,6 +971,10 @@ void carga_operaciones_y_mnemonicos(TRegOp operaciones[]){
     operaciones[7].funcion = &jnn;
     operaciones[8].funcion = &not;
     operaciones[15].funcion = &stop;
+    operaciones[10].funcion = &push;
+    operaciones[11].funcion = &pop;
+    operaciones[12].funcion = &call;
+    operaciones[13].funcion = &ret;
     //carga mnemonicos
     strcpy(operaciones[16].nombre, "MOV");
     strcpy(operaciones[17].nombre, "ADD");
@@ -892,6 +1002,10 @@ void carga_operaciones_y_mnemonicos(TRegOp operaciones[]){
     strcpy(operaciones[7].nombre, "JNN");
     strcpy(operaciones[8].nombre, "NOT");
     strcpy(operaciones[15].nombre, "STOP");
+    strcpy(operaciones[10].nombre, "PUSH");
+    strcpy(operaciones[11].nombre, "POP");
+    strcpy(operaciones[12].nombre, "CALL");
+    strcpy(operaciones[13].nombre, "RET");
 }
 
 
