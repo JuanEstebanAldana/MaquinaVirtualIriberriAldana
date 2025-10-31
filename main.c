@@ -3,6 +3,7 @@
 #include <string.h>
 #include <time.h>
 
+#define MEM_MAX 65536
 #define MEM_DEFAULT 16384
 #define MAX_PARAMETROS 20
 #define TAM_TABLA 8
@@ -16,6 +17,8 @@
 #define INVALIDOP 2
 #define DIVZERO 3
 #define MEMINS 4
+#define STACKUNDERFLOW 5
+#define STACKOVERFLOW 6
 #define CS 0
 #define DS 1
 #define OP1 1
@@ -35,7 +38,7 @@ typedef struct {
     char arch_fuente[MAX_ARCH], arch_img[MAX_ARCH];
     unsigned int tam_memoria;
     char d;
-    unsigned short int tam_ps;} TRegComandos;
+    unsigned short int tam_ps, pos_arg, cant_arg;} TRegComandos;
 
 typedef struct {
     char identificador[LONG_ID], version;
@@ -45,10 +48,11 @@ typedef struct {
     unsigned short int base, tam;} TRegTabla;
 
 typedef struct {
-    char memoria[TAM_MEMORIA];
+    char memoria[MEM_MAX];
     TRegTabla tabla_segmentos[TAM_TABLA];
     int registros[CANT_REGISTROS];
-    char cod_error;} TMaquinaVirtual;           //provisoriamente segmentation error es codigo=1
+    char cod_error, debugger, arch_img[MAX_ARCH];
+    unsigned int tam_memoria;} TMaquinaVirtual;
 
 typedef void (*ptro_func)(TMaquinaVirtual*);
 
@@ -130,7 +134,7 @@ void disassembler(TMaquinaVirtual mv, TRegDisassembler info, TRegOp operaciones[
 }
 
 
-void muestra_cadenas(TMquinaVirtual *mv){
+void muestra_cadenas(TMaquinaVirtual *mv){
 
     unsigned short int cont, aux_indice, pos_base, tope, celda;
     char car;
@@ -238,6 +242,7 @@ void set(TMaquinaVirtual *mv, int valor){
 
             case 0b11000000:    mv->registros[operando & 0x1F] = (mv->registros[operando & 0x1F] & 0xFFFF0000) | valor & 0x0000FFFF;
                                 break;
+        }
     }
     else{
         subtipo = operando & 0xC00000;
@@ -547,7 +552,7 @@ void sys_3 (TMaquinaVirtual *mv){
         }
     }
     else{
-        carga_LAR_MAR(mv, (*mv).registros[13], cant_max+1);
+        carga_LAR_MAR(mv, (*mv).registros[13], 1);
         if (!(*mv).cod_error){
             printf("[%04X] = ", (*mv).registros[1] & 0xFFFF);
             if (cant_max)
@@ -556,11 +561,17 @@ void sys_3 (TMaquinaVirtual *mv){
                     (*mv).registros[2] = car;
                     escribe_memoria(mv);
                     cont++;
-                    (*mv).registros[1]++;
-                } while (cont < cant_max && car != '\n')
-            if (car != '\n')
-                (*mv).registros[2] = '\n';
-                escribe_memoria(mv);
+                    if (car != '\n')
+                        carga_LAR_MAR(mv, ++(*mv).registros[13], 1);
+                } while (!(*mv).cod_error && cont < cant_max && car != '\n');
+            if (!(*mv).cod_error){
+                if (car != '\n'){
+                    (*mv).registros[2] = '\n';
+                    escribe_memoria(mv);
+                }
+                while ((car = getchar()) != '\n' && car != EOF)
+                    ;
+            }
         }
     }
 }
@@ -590,15 +601,15 @@ void sys_7 (TMaquinaVirtual *mv){
 }
 
 
-void sys_F (TMaquinaVirtual *mv, TRegComandos comandos){
+void sys_F (TMaquinaVirtual *mv){
 
 
     char aux='x';
 
 
-    if (strlen(comandos.arch_img)){
+    if (strlen((*mv).arch_img)){
 
-        guarda_imagen(mv, comandos);
+        guarda_imagen(mv);
 
         while (aux !='g' && aux !='q' && aux !='\n')
             scanf("%c",&aux);
@@ -613,58 +624,6 @@ void sys_F (TMaquinaVirtual *mv, TRegComandos comandos){
     }
 }
 
-
-
-void push(TMaquinaVirtual *mv){
-    int valor,i/*,dirfis*/;
-    mv->registros[7]-=4;//1)DECREMENTA EL VALOR DEL SP EN 4
-    if (mv->registros[7]<mv->tabla_segmentos[mv->registros[29]].base)//2)VERIFICA SI HAY ERROR
-        mv->cod_error=STACKOVERFLOW;//STACK OVERFLOW
-    else{
-        valor=get(mv->registros[5]);//3,4)OBTIENE EL VALOR DEL OPERANDO, GET TRANSFORMA A 4 BYTES
-        carga_LAR_MAR(mv,mv->registros[7],4);
-        //dirfis=mv->tabla_segmentos[mv->registros[7]>>16].base + mv->registros[7] & 0x0000FFFF;//EL SP ES UN PUNETERO, LO TRANSFORMO A FISICA LOCALMENTE PORQUE POP Y PUSH NO MODIFICAN LAR Y MAR
-        for (i=0;i<4; mv->memoria[mv->registros[1]+4-i] = ((char)(valor >> (8*i))))
-            i++;
-        ;
-    }
-}
-
-
-void pop(TMaquinaVirtual *mv){
-    int valor,i/*,dirfis*/;
-    mv->registros[7]+=4;
-    if ((mv->tabla_segmentos[mv->registros[29]].base + mv->tabla_segmentos[mv->registros[29]].tam - (mv->registros[7] & 0x0000FFFF + mv->tabla_segmentos[mv->registros[29]].base)) < 4)
-        mv->cod_error=STACKUNDERFLOW;//STACK UNDERFLOW
-    else{
-        valor=0;
-        carga_LAR_MAR(mv,mv->registros[7],4);
-        //dirfis=mv->tabla_segmentos[mv->registros[7]>>16].base + mv->registros[7] & 0x0000FFFF;
-        for (i=0;i<4;valor=(valor<<8)+mv->memoria[mv->registros[1]+4-i])//LOS VALORES DEL MAR Y EL LAR DEBEN SER ACTUALIZADOS SEGUN LA CELDA QUE SE LEVANTA O ESCRIBE???
-            i++;
-        ;
-        set(mv,valor);
-    }
-}
-
-
-void call(TMaquinaVirtual *mv){
-    int aux;
-    aux=mv->registros[5];
-    mv->registros[5]=mv->registros[3];
-    push(mv)
-    mv->registros[5]=aux;
-    jmp(mv);
-}
-//ESTO ES TEORICAMENTE CUESTIONABLE PERO DESDE LA PROGRAMACION ES AMPIAMENTE MAS SENCILLO
-//LA CONSTRUCCION DE ESTOS DOS UTILIZA UN AUXILIAR YA QUE PASA PODER USAR POP Y PUSH HAY QUE PRECISAR DEL OP1, LO QUE GENERA LA NECESIDAD DE SALVAGUARDAR EL VERDADERO OP1, PARA QUE NO SE MODIFIQUE
-void ret(TMaquinaVirtual *mv){
-    int aux;
-    aux=mv->registros[5];
-    mv->registros[5]=0x01000003;//EN EL OPERANDO 1 COLOCA EL REGISTRO IP CON LA INTENCION QUE EL POP LO ACTUALICE Y LUEGO DEVUELVE AL OP1 LO QUE TIENE QUE SER CON EL AUX
-    pop(mv);
-    mv->registros[5]=aux;
-}
 
 
 
@@ -776,9 +735,9 @@ void ldl(TMaquinaVirtual *mv){
 
     aux_op1 = get(mv, OP1);
     aux_op2 = get(mv, OP2);
-    tipo = (mv->registros[5] & 0xFF000000)>>24;
+    tipo = (mv->registros[5] & 0xFF000000) >> 24;
     if (tipo == 1){
-        subtipo = (mv->registros[5] & 0b11000000)>>6;
+        subtipo = (mv->registros[5] & 0b11000000) >> 6;
         switch (subtipo){
             case 1: aux_op1 &= 0xFFFFFF00;
                     aux_op2 &= 0x000000FF;
@@ -789,31 +748,29 @@ void ldl(TMaquinaVirtual *mv){
                 break;
             default: aux_op1 &= 0xFFFF0000;
                      aux_op2 &= 0x0000FFFF;
-                break;//el caso default es para la carga de ax o de eax, que a efecto practicos son lo mismo para ldl
+                break;                              //el caso default es para la carga de ax o de eax, que a efectos practicos son lo mismo para ldl
         }
         aux_op1 |= aux_op2;
         set(mv, aux_op1);
     }
     else{
-        if ((mv->registros[5] & 0xC00000)>>22 == 0){//el ldl en memoria solo se realiza con modificador l o sin modificador, 4 celdas
-            aux_op1 &= 0xFFFF0000;
-            aux_op2 &= 0x0000FFFF;
-            aux_op1 |= aux_op2;
-            set(mv, aux_op1);
-        }
+        aux_op1 &= 0xFFFF0000;
+        aux_op2 &= 0x0000FFFF;
+        aux_op1 |= aux_op2;
+        set(mv, aux_op1);
     }
 }
 
 
 
 
-void ldh(TMaquinaVirtual *mv){//PARA LDH, SOLO SE CARGAN COSAS SI SE TRATA DE UN REGISTRO ENTERO O UNA CELDA DE MEMORIA DE 4, POR LO QUE SOLO ES NECESARIO VERIFICAR SI ESTA CONDICION SE DA.
+void ldh(TMaquinaVirtual *mv){          //PARA LDH, SOLO SE CARGAN COSAS SI SE TRATA DE UN REGISTRO ENTERO O UNA CELDA DE MEMORIA DE 4, POR LO QUE SOLO ES NECESARIO VERIFICAR SI ESTA CONDICION SE DA.
 
 
     int aux_op1, aux_op2;
 
 
-    if (((mv->registros[5] & 0x01000000) && (mv->registros[5] & 0b11000000 == 0)) || ((mv->registros[5] & 0x03000000) && (mv->registros[5] & 0x110000 == 0))){//uso mascaras invertidas
+    if ((mv->registros[5] & 0x01000000 == 0x01000000) && (mv->registros[5] & 0b11000000 == 0b11000000) || (mv->registros[5] & 0x03000000 == 0x03000000) && (mv->registros[5] & 0x110000 == 0x110000)){
         aux_op1 = get(mv, OP1);
         aux_op2 = get(mv, OP2);
         aux_op1 &= 0xFFFF;
@@ -830,11 +787,23 @@ void rnd(TMaquinaVirtual *mv){
 }
 
 void sys(TMaquinaVirtual *mv){
+
     int aux = get(mv, OP1);
-    if (aux == 1)
-        sys_1(mv);
-    else
-        sys_2(mv);
+
+    switch (aux){
+        case 1: sys_1(mv);
+                break;
+        case 2: sys_2(mv);
+                break;
+        case 3: sys_3(mv);
+                break;
+        case 4: sys_4(mv);
+                break;
+        case 7: sys_7(mv);
+                break;
+        case 15:sys_F(mv);
+                break;
+    }
 }
 
 void jmp(TMaquinaVirtual *mv){
@@ -879,6 +848,79 @@ void stop(TMaquinaVirtual *mv){
     (*mv).registros[3] = -1;
 }
 
+void push(TMaquinaVirtual *mv){
+
+    int valor;
+
+    mv->registros[7] -= 4;                          //1)DECREMENTA EL VALOR DEL SP EN 4
+    if (mv->registros[7] < mv->registros[29])       //2)VERIFICA SI HAY ERROR
+        mv->cod_error = STACKOVERFLOW;
+    else{
+        valor = get(mv, OP1);                      //3,4)OBTIENE EL VALOR DEL OPERANDO, GET TRANSFORMA A 4 BYTES
+        for (int i=0; i<4; i++){
+            carga_LAR_MAR(mv, mv->registros[7]+3-i, 1);
+            mv->registros[2] = (char) (valor >> 8*i);
+            escribe_memoria(mv);
+        }
+    }
+}
+
+
+void pop(TMaquinaVirtual *mv){
+
+    int aux, valor=0, i=0;
+
+    if (mv->registros[7] == mv->registros[29] + mv->tabla_segmentos[shr(mv->registros[29], 16)].tam)
+        mv->cod_error = STACKUNDERFLOW;
+    else{
+        while (!mv->cod_error && i<4){
+            carga_LAR_MAR(mv, mv->registros[7]+i, 1);
+            if (!mv->cod_error){
+                lee_memoria(mv);
+                aux = mv->registros[2];
+                aux &= 0xFF;
+                valor <<= 8;
+                valor += aux;
+                i++;
+            }
+        }
+        if (mv->cod_error)
+            mv->cod_error = STACKUNDERFLOW;
+        else{
+            set(mv, valor);
+            mv->registros[7] += 4;
+        }
+    }
+}
+
+
+void call(TMaquinaVirtual *mv){
+
+    int aux;
+
+    aux = mv->registros[5];
+
+    mv->registros[5] = 0x01000003;  //operando de registro IP
+    push(mv);
+
+    mv->registros[5] = aux;
+    jmp(mv);
+}
+
+//LA CONSTRUCCION DE ESTOS DOS UTILIZA UN AUXILIAR YA QUE PASA PODER USAR POP Y PUSH HAY QUE PRECISAR DEL OP1, LO QUE GENERA LA NECESIDAD DE SALVAGUARDAR EL VERDADERO OP1, PARA QUE NO SE MODIFIQUE
+void ret(TMaquinaVirtual *mv){
+
+    int aux;
+
+    aux = mv->registros[5];
+
+    mv->registros[5] = 0x01000003;    //EN EL OPERANDO 1 COLOCA EL REGISTRO IP CON LA INTENCION QUE EL POP LO ACTUALICE Y LUEGO DEVUELVE AL OP1 LO QUE TIENE QUE SER CON EL AUX
+    pop(mv);
+
+    mv->registros[5] = aux;
+}
+
+
 
 
 
@@ -918,6 +960,10 @@ void carga_operaciones_y_mnemonicos(TRegOp operaciones[]){
     operaciones[6].funcion = &jnp;
     operaciones[7].funcion = &jnn;
     operaciones[8].funcion = &not;
+    operaciones[11].funcion = &push;
+    operaciones[12].funcion = &pop;
+    operaciones[13].funcion = &call;
+    operaciones[14].funcion = &ret;
     operaciones[15].funcion = &stop;
     //carga mnemonicos
     strcpy(operaciones[16].nombre, "MOV");
@@ -945,6 +991,10 @@ void carga_operaciones_y_mnemonicos(TRegOp operaciones[]){
     strcpy(operaciones[6].nombre, "JNP");
     strcpy(operaciones[7].nombre, "JNN");
     strcpy(operaciones[8].nombre, "NOT");
+    strcpy(operaciones[11].nombre, "PUSH");
+    strcpy(operaciones[12].nombre, "POP");
+    strcpy(operaciones[13].nombre, "CALL");
+    strcpy(operaciones[14].nombre, "RET");
     strcpy(operaciones[15].nombre, "STOP");
 }
 
@@ -957,7 +1007,7 @@ int str_a_num(char *str){
     while (str[i] != '\0'){
         aux = str[i] - 48;
         sum = sum * 10 + aux;
-        i++
+        i++;
     }
 
     return sum;
@@ -997,6 +1047,16 @@ void carga_ps(int argc, char *argv[], int i, TRegComandos *comandos, TMaquinaVir
         cont_vec++;
         i++;
     }
+
+    if (cont_vec){
+        (*comandos).cant_arg = cont_vec;
+        (*comandos).pos_arg = pos_mem;              //si bien esto debe ser un puntero (dir logica), al ser el primer segmento del unico proceso en memoria, dir logica y fisica coinciden
+    }
+    else{
+        (*comandos).cant_arg = 0;
+        (*comandos).pos_arg = -1;
+    }
+
     for (int k=0; k < cont_vec; k++){
         (*mv).memoria[pos_mem] = vec_punt_param[k];
         pos_mem += 4;
@@ -1064,7 +1124,7 @@ void carga_segmentos(TMaquinaVirtual *mv, THeaderVMX header, TRegComandos comand
     //verifico si inicializo la tabla con PS
     if (comandos.tam_ps){
         (*mv).tabla_segmentos[0].base = 0;
-        (*mv).tabla_segmentos[0].tam = tam_ps;
+        (*mv).tabla_segmentos[0].tam = comandos.tam_ps;
         (*mv).registros[31] = 0;
         indice_seg++;
     }
@@ -1142,7 +1202,7 @@ void carga_programa(TMaquinaVirtual *mv, TRegComandos comandos){
             fread(&header.offset_entry, sizeof(header.offset_entry), 1, arch);
         }
 
-        if (!strcmp(identificador, "VMX25") && sum_tam <= comandos.tam_memoria)){
+        if (!strcmp(header.identificador, "VMX25") && sum_tam <= comandos.tam_memoria){
 
             carga_segmentos(mv, header, comandos);
 
@@ -1170,7 +1230,14 @@ void carga_programa(TMaquinaVirtual *mv, TRegComandos comandos){
                 }
             }
 
-
+            //CARGA PILA SUBRUTINA PRINCIPAL
+            (*mv).registros[5] = 0x0100000A;
+            (*mv).registros[10] = comandos.pos_arg;
+            push(mv);
+            (*mv).registros[10] = comandos.cant_arg;
+            push(mv);
+            (*mv).registros[10] = -1;
+            push(mv);
 
             //inicializa registros en general
             for (int i=0; i<26; i++)
@@ -1181,7 +1248,7 @@ void carga_programa(TMaquinaVirtual *mv, TRegComandos comandos){
 
 
             aux_indice = shr((*mv).registros[29], 16);
-            (*mv).registros[7] = (*mv).tabla_segmentos[aux_indice].base + (*mv).tabla_segmentos[aux_indice].tam;    //registro SP; no verifico que exista SS por el mismo motivo que en el caso del IP
+            (*mv).registros[7] = (*mv).registros[29] + (*mv).tabla_segmentos[aux_indice].tam;    //registro SP; no verifico que exista SS por el mismo motivo que en el caso del IP
 
 
             (*mv).cod_error = 0;
@@ -1212,7 +1279,7 @@ void carga_imagen(TMaquinaVirtual *mv, TRegComandos comandos){
     else{
         fread(identificador, sizeof(identificador)-1, 1, arch);
         identificador[LONG_ID-1] = '\0';
-        fread(&version, sixeof(version), 1, arch);
+        fread(&version, sizeof(version), 1, arch);
         fread(&tam, sizeof(tam), 1, arch);
 
         if (!strcmp(identificador, "VMI25") && version == 1 && tam <= comandos.tam_memoria){
@@ -1222,6 +1289,7 @@ void carga_imagen(TMaquinaVirtual *mv, TRegComandos comandos){
                 fread(&(*mv).tabla_segmentos[i], sizeof(TRegTabla), 1, arch);
             for (int i=0; i < comandos.tam_memoria; i++)
                 fread(&(*mv).memoria[i], sizeof(char), 1, arch);
+            (*mv).cod_error = 0;
         }
         else
             if (tam > comandos.tam_memoria)
@@ -1235,19 +1303,19 @@ void carga_imagen(TMaquinaVirtual *mv, TRegComandos comandos){
 }
 
 
-void guarda_imagen(TMaquinaVirtual *mv, TRegComandos comandos){
+void guarda_imagen(TMaquinaVirtual *mv){
 
     FILE *arch;
     char identificador[LONG_ID], version;
     unsigned short int tam;
 
-    arch = fopen(comandos.arch_img, "wb");
+    arch = fopen((*mv).arch_img, "wb");
 
     strcpy(identificador, "VMI25");
     fwrite(identificador, sizeof(identificador), 1, arch);
     version = 1;
     fwrite(&version, sizeof(version), 1, arch);
-    tam = comandos.tam_memoria;
+    tam = (*mv).tam_memoria;
     fwrite(&tam, sizeof(tam), 1, arch);
 
     for (int i=0; i < CANT_REGISTROS; i++)
@@ -1256,7 +1324,7 @@ void guarda_imagen(TMaquinaVirtual *mv, TRegComandos comandos){
     for (int i=0; i < TAM_TABLA; i++)
         fwrite(&(*mv).tabla_segmentos[i], sizeof(TRegTabla), 1, arch);
 
-    for (int i=0; i < comandos.tam_memoria; i++)
+    for (int i=0; i < tam; i++)
         fwrite(&(*mv).memoria[i], sizeof(char), 1, arch);
 
     fclose(arch);
@@ -1281,10 +1349,8 @@ int main(int argc, char *argv[]){
 
     procesa_comandos(argc, argv, &comandos, &maquina_virtual);
 
-    if (strlen(comandos.arch_fuente)){
-        carga_programa(&maquina_virtual, comandos.arch_fuente);
-        //PUSHEA PILA
-    }
+    if (strlen(comandos.arch_fuente))
+        carga_programa(&maquina_virtual, comandos);
     else if (strlen(comandos.arch_img))
         carga_imagen(&maquina_virtual, comandos);
     else{
@@ -1292,11 +1358,15 @@ int main(int argc, char *argv[]){
         maquina_virtual.registros[3] = -1;
     }
 
-    dir_entry = maquina_virtual.registros[3];
+    if (maquina_virtual.registros[3] != -1 && !maquina_virtual.cod_error){
+        dir_entry = maquina_virtual.registros[3];
+        maquina_virtual.debugger = 0;
+        strcpy(maquina_virtual.arch_img, comandos.arch_img);
+        maquina_virtual.tam_memoria = comandos.tam_memoria;
 
-    if (comandos.d && maquina_virtual.registros[30] != -1)
-        muestra_cadenas(&maquina_virtual);
-
+        if (comandos.d && maquina_virtual.registros[30] != -1)
+            muestra_cadenas(&maquina_virtual);
+    }
 
     while (maquina_virtual.registros[3] != -1 && !maquina_virtual.cod_error){
         log_a_fis(&maquina_virtual, maquina_virtual.registros[3], 1, &dir_fisica_instruccion);
@@ -1343,6 +1413,8 @@ int main(int argc, char *argv[]){
                     if (comandos.d)
                         disassembler(maquina_virtual, info_dis, operaciones, nom_reg, dir_entry);
                     operaciones[maquina_virtual.registros[4]].funcion(&maquina_virtual);
+                    if (maquina_virtual.debugger)
+                        sys_F(&maquina_virtual);
                 }
                 else
                     maquina_virtual.cod_error = INVALIDOP;
