@@ -77,7 +77,7 @@ void disassembler(TMaquinaVirtual mv, TRegDisassembler info, TRegOp operaciones[
     int aux, reg, offset;
     char tipo, car;
 
-    printf("%c[%04X] ", (info.direccion == dir_entry)? ">":" ", info.direccion);
+    printf("%c[%04X] ", (info.direccion == dir_entry)? '>':' ', info.direccion);
 
     for (int i=0; i <= info.indice; i++)
         printf("%02X ", info.instruccion_completa[i]);
@@ -93,7 +93,7 @@ void disassembler(TMaquinaVirtual mv, TRegDisassembler info, TRegOp operaciones[
         switch(tipo){
             case 1: car = nom_reg[aux & 0x1F][1];   //extraigo la letra que identifica al registro (A...F)
                     switch (shr(aux & 0xC0, 6)){
-                        case 0: printf("%3s", nom_reg[aux & 0x1F]);
+                        case 0: printf("%s", nom_reg[aux & 0x1F]);
                                 break;
                         case 1: printf(" %cL", car);
                                 break;
@@ -109,16 +109,17 @@ void disassembler(TMaquinaVirtual mv, TRegDisassembler info, TRegOp operaciones[
             case 3: switch (shr(aux & 0xC00000, 22)){
                         case 0: printf("l[");
                                 break;
-                        case 1: printf("w[");
+                        case 2: printf("w[");
                                 break;
-                        case 2: printf("b[");
+                        case 3: printf("b[");
                                 break;
                     }
                     reg = shr(aux & 0x1F0000, 16);
-                    offset = aux & 0xFFFF;
+                    offset = (aux & 0xFFFF) << 16;
+                    offset >>= 16;
                     if (reg)
                         printf("%s", nom_reg[reg]);
-                    if (reg && offset)
+                    if (reg && offset > 0)
                         printf("+");
                     if (offset)
                         printf("%d", offset);
@@ -129,6 +130,9 @@ void disassembler(TMaquinaVirtual mv, TRegDisassembler info, TRegOp operaciones[
             if (i == 0 && shr(mv.registros[6] & 0xFF000000, 24))
                 printf(", ");
             else
+                printf("\n");
+        else
+            if (i == 0)
                 printf("\n");
     }
 }
@@ -220,7 +224,7 @@ void carga_nombres_registros(nombre_r nom_reg[]){
 void set(TMaquinaVirtual *mv, int valor){
 
 
-    int operando;
+    int operando, offset;
     char tipo, subtipo, tam_acceso;
 
 
@@ -229,34 +233,36 @@ void set(TMaquinaVirtual *mv, int valor){
 
 
     if (tipo == 1){
-        subtipo = operando & 0b11000000;
+        subtipo = shr(operando & 0b11000000, 6);
         switch(subtipo){
-            case 0b00000000:    mv->registros[operando & 0x1F] = valor;
-                                break;
+            case 0: mv->registros[operando & 0x1F] = valor;
+                    break;
 
-            case 0b01000000:    mv->registros[operando & 0x1F] = (mv->registros[operando & 0x1F] & 0xFFFFFF00) | valor & 0x000000FF;
-                                break;
+            case 1: mv->registros[operando & 0x1F] = (mv->registros[operando & 0x1F] & 0xFFFFFF00) | valor & 0x000000FF;
+                    break;
 
-            case 0b10000000:    mv->registros[operando & 0x1F] = (mv->registros[operando & 0x1F] & 0xFFFF00FF) | (valor & 0x000000FF) << 8;
-                                break;
+            case 2: mv->registros[operando & 0x1F] = (mv->registros[operando & 0x1F] & 0xFFFF00FF) | (valor & 0x000000FF) << 8;
+                    break;
 
-            case 0b11000000:    mv->registros[operando & 0x1F] = (mv->registros[operando & 0x1F] & 0xFFFF0000) | valor & 0x0000FFFF;
-                                break;
+            case 3: mv->registros[operando & 0x1F] = (mv->registros[operando & 0x1F] & 0xFFFF0000) | valor & 0x0000FFFF;
+                    break;
         }
     }
     else{
-        subtipo = operando & 0xC00000;
+        subtipo = shr(operando & 0xC00000, 22);
         switch (subtipo){
-            case 0x000000:  tam_acceso = 4;
-                            break;
-            case 0x800000:  tam_acceso = 2;
-                            break;
-            case 0xC00000:  tam_acceso = 1;
-                            break;
+            case 0: tam_acceso = 4;
+                    break;
+            case 2: tam_acceso = 2;
+                    break;
+            case 3: tam_acceso = 1;
+                    break;
         }
-        carga_LAR_MAR(mv, mv->registros[(operando & 0x001F0000) >> 16] + (operando & 0x0000FFFF), tam_acceso);
-        mv->registros[2] = valor;
-        if (!mv->cod_error)
+        offset = operando << 16;
+        offset >>= 16;
+        carga_LAR_MAR(mv, (*mv).registros[(operando & 0x001F0000) >> 16] + offset, tam_acceso);
+        (*mv).registros[2] = valor;
+        if (!(*mv).cod_error)
             escribe_memoria(mv);
     }
 }
@@ -267,7 +273,7 @@ void set(TMaquinaVirtual *mv, int valor){
 int get(TMaquinaVirtual *mv, char selec_operando){
 
 
-    int operando, valor;
+    int operando, valor, offset;
     char tipo, subtipo, tam_acceso;
 
 
@@ -276,20 +282,20 @@ int get(TMaquinaVirtual *mv, char selec_operando){
 
 
     switch (tipo){
-        case 1: subtipo = operando & 0b11000000;
+        case 1: subtipo = shr(operando & 0b11000000, 6);
                 valor = mv->registros[operando & 0x1F];
                 switch (subtipo){
-                    case 0b01000000:    valor <<= 24;
-                                        valor >>= 24;
-                                        break;
+                    case 1: valor <<= 24;
+                            valor >>= 24;
+                            break;
 
-                    case 0b10000000:    valor <<= 16;
-                                        valor >>= 24;
-                                        break;
+                    case 2: valor <<= 16;
+                            valor >>= 24;
+                            break;
 
-                    case 0b11000000:    valor <<= 16;
-                                        valor >>= 16;
-                                        break;
+                    case 3: valor <<= 16;
+                            valor >>= 16;
+                            break;
                 }
                 break;
 
@@ -300,19 +306,21 @@ int get(TMaquinaVirtual *mv, char selec_operando){
                 break;
 
 
-        case 3: subtipo = operando & 0xC00000;
+        case 3: subtipo = shr(operando & 0xC00000, 22);
                 switch (subtipo){
-                    case 0x000000: tam_acceso = 4;
-                    break;
-                    case 0x800000: tam_acceso = 2;
-                    break;
-                    case 0xC00000: tam_acceso = 1;
-                    break;
+                    case 0: tam_acceso = 4;
+                            break;
+                    case 2: tam_acceso = 2;
+                            break;
+                    case 3: tam_acceso = 1;
+                            break;
 
 
                 }
-                carga_LAR_MAR(mv, mv->registros[(operando & 0x001F0000) >> 16] + (operando & 0x0000FFFF), tam_acceso);
-                if (!mv->cod_error){
+                offset = operando << 16;
+                offset >>= 16;
+                carga_LAR_MAR(mv, (*mv).registros[(operando & 0x001F0000) >> 16] + offset, tam_acceso);
+                if (!(*mv).cod_error){
                     lee_memoria(mv);
                     valor = mv->registros[2];
                 }
@@ -536,61 +544,71 @@ void sys_3 (TMaquinaVirtual *mv){
 
 
     short int cant_max = (*mv).registros[12] & 0xFFFF, cont=0;
-    unsigned char car='.';
+    unsigned char car;
 
+    printf("\n");
     if (cant_max == -1){
         carga_LAR_MAR(mv, (*mv).registros[13], 1);
         if (!(*mv).cod_error){
-            printf("[%04X] = ", (*mv).registros[1] & 0xFFFF);
-            do{
-                scanf("%c", &car);
+            //printf("[%04X] = ", (*mv).registros[1] & 0xFFFF);
+            scanf("%c", &car);
+            while (!(*mv).cod_error && car != '\n'){
                 (*mv).registros[2] = car;
                 escribe_memoria(mv);
-                if (car != '\n')
-                    carga_LAR_MAR(mv, ++(*mv).registros[13], 1);
-            } while (!(*mv).cod_error && car != '\n');
+                carga_LAR_MAR(mv, ++(*mv).registros[13], 1);
+                scanf("%c", &car);
+            }
+            if (!(*mv).cod_error){
+                (*mv).registros[2] = '\0';
+                escribe_memoria(mv);
+            }
         }
     }
     else{
         carga_LAR_MAR(mv, (*mv).registros[13], 1);
         if (!(*mv).cod_error){
-            printf("[%04X] = ", (*mv).registros[1] & 0xFFFF);
-            if (cant_max)
-                do{
-                    scanf("%c", &car);
-                    (*mv).registros[2] = car;
-                    escribe_memoria(mv);
-                    cont++;
-                    if (car != '\n')
-                        carga_LAR_MAR(mv, ++(*mv).registros[13], 1);
-                } while (!(*mv).cod_error && cont < cant_max && car != '\n');
+            //printf("[%04X] = ", (*mv).registros[1] & 0xFFFF);
+            scanf("%c", &car);
+            while (!(*mv).cod_error && cont < cant_max && car != '\n'){
+                (*mv).registros[2] = car;
+                escribe_memoria(mv);
+                cont++;
+                carga_LAR_MAR(mv, ++(*mv).registros[13], 1);
+                scanf("%c", &car);
+            }
             if (!(*mv).cod_error){
-                if (car != '\n'){
-                    (*mv).registros[2] = '\n';
-                    escribe_memoria(mv);
-                }
+                (*mv).registros[2] = '\0';
+                escribe_memoria(mv);
                 while ((car = getchar()) != '\n' && car != EOF)
                     ;
             }
         }
     }
+    printf("\n");
 }
 
 
 void sys_4 (TMaquinaVirtual *mv){
 
     short int cant_max = (*mv).registros[12] & 0xFFFF;
+    char car;
 
+    printf("\n");
     carga_LAR_MAR(mv, (*mv).registros[13], 1);
     if (!(*mv).cod_error){
-        printf("[%04X] = ", (*mv).registros[1] & 0xFFFF);
+        //printf("[%04X] = ", (*mv).registros[1] & 0xFFFF);
         do{
             lee_memoria(mv);
-            printf("%c", (*mv).registros[2]);
-            if ((*mv).registros[2] != '\n')
+            car = (*mv).registros[2];
+            if (32 <= car && car <= 126 || car == '\n' || car == '\0')
+                printf("%c", car);
+            else
+                printf("%c", '.');
+            if ((*mv).registros[2] != '\0')
                 carga_LAR_MAR(mv, ++(*mv).registros[13], 1);
-        } while (!(*mv).cod_error && (*mv).registros[2] != '\n');
+        } while (!(*mv).cod_error && (*mv).registros[2] != '\0');
     }
+    printf("\n\n");
 }
 
 
@@ -1107,7 +1125,7 @@ void procesa_comandos(int argc, char *argv[], TRegComandos *comandos, TMaquinaVi
             (*comandos).d = 0;
         if (i < argc && !strcmp(argv[i], "-p") && strlen((*comandos).arch_fuente)){
             i++;
-            carga_ps(argc, argv, i, mv, comandos);
+            carga_ps(argc, argv, i, comandos, mv);
         }
         else
             (*comandos).tam_ps = 0;
@@ -1277,6 +1295,9 @@ void carga_imagen(TMaquinaVirtual *mv, TRegComandos comandos){
     FILE *arch;
     char identificador[LONG_ID], version;
     unsigned short int tam;
+    unsigned char aux;
+    TRegTabla reg_tabla;
+    int reg;
 
     arch = fopen(comandos.arch_img, "rb");
     if (arch == NULL){
@@ -1287,13 +1308,25 @@ void carga_imagen(TMaquinaVirtual *mv, TRegComandos comandos){
         fread(identificador, sizeof(identificador)-1, 1, arch);
         identificador[LONG_ID-1] = '\0';
         fread(&version, sizeof(version), 1, arch);
-        fread(&tam, sizeof(tam), 1, arch);
+        fread(&tam, 1, 1, arch);
+        tam <<= 8;
+        fread(&aux, 1, 1, arch);
+        tam |= aux;
 
         if (!strcmp(identificador, "VMI25") && version == 1 && tam <= comandos.tam_memoria){
-            for (int i=0; i < CANT_REGISTROS; i++)
-                fread(&(*mv).registros[i], TAM_REGISTRO, 1, arch);
-            for (int i=0; i < TAM_TABLA; i++)
-                fread(&(*mv).tabla_segmentos[i], sizeof(TRegTabla), 1, arch);
+            for (int i=0; i < CANT_REGISTROS; i++){
+                fread(&(*mv).registros[i], 1, 1, arch);
+                for (int j = 1; j < sizeof(int); j++){
+                    (*mv).registros[i] <<= 8;
+                    fread(&aux, 1, 1, arch);
+                    (*mv).registros[i] |= aux;
+                }
+            }
+            for (int i=0; i < TAM_TABLA; i++){
+                fread(&reg_tabla, sizeof(TRegTabla), 1, arch);
+                (*mv).tabla_segmentos[i].base = (reg_tabla.base << 8) | ((reg_tabla.base >> 8) & 0xFF);
+                (*mv).tabla_segmentos[i].tam = (reg_tabla.tam << 8) | ((reg_tabla.tam >> 8) & 0xFF);
+            }
             for (int i=0; i < comandos.tam_memoria; i++)
                 fread(&(*mv).memoria[i], sizeof(char), 1, arch);
             (*mv).cod_error = 0;
@@ -1302,7 +1335,7 @@ void carga_imagen(TMaquinaVirtual *mv, TRegComandos comandos){
             if (tam > comandos.tam_memoria)
                 (*mv).cod_error = MEMINS;
             else{
-                printf("El archivo ejecutable es invalido.\n");
+                printf("El archivo de imagen es invalido.\n");
                 (*mv).registros[3] = -1;
             }
         fclose(arch);
@@ -1355,7 +1388,7 @@ int main(int argc, char *argv[]){
     carga_nombres_registros(nom_reg);
 
     procesa_comandos(argc, argv, &comandos, &maquina_virtual);
-    //strcpy(comandos.arch_fuente, "sample1.vmx");
+    //strcpy(comandos.arch_img, "sample3.vmi");
     //comandos.d = 1;
     //comandos.tam_memoria = MEM_DEFAULT;
 
@@ -1446,6 +1479,8 @@ int main(int argc, char *argv[]){
         case INVALIDOP:         printf("\nINVALID OPERATION\n");
                                 break;
         case DIVZERO:           printf("\nDIVISION BY ZERO\n");
+                                break;
+        case MEMINS:            printf("\nMEMORIA INSUFICIENTE\n");
                                 break;
         case STACKUNDERFLOW:    printf("\nSTACK UNDERFLOW\n");
                                 break;
