@@ -3,7 +3,7 @@
 #include <string.h>
 #include <time.h>
 
-#define MEM_MAX 65536
+#define MEM_MAX 16384
 #define MEM_DEFAULT 16384
 #define MAX_PARAMETROS 20
 #define TAM_TABLA 8
@@ -144,15 +144,15 @@ void muestra_cadenas(TMaquinaVirtual *mv){
     tope = pos_base + (*mv).tabla_segmentos[aux_indice].tam;
 
     while (pos_base < tope){
-        printf("[%04X] ", pos_base);
+        printf(" [%04X] ", pos_base);
 
         celda = pos_base;
         cont = 0;
-        while ((*mv).memoria[celda] != '\0' && cont < 7){
+        while ((*mv).memoria[celda] != '\0' && cont < 6){
             printf("%02X ", (*mv).memoria[celda++]);
             cont++;
         }
-        if (cont < 7)
+        if (cont < 6)
             printf("%02X ", (*mv).memoria[celda]);
         else
             printf(".. ");
@@ -165,7 +165,7 @@ void muestra_cadenas(TMaquinaVirtual *mv){
         while ((*mv).memoria[celda] != '\0'){
             car = (*mv).memoria[celda++];
             if (32 <= car && car <= 126)
-                printf("%02X ", car);
+                printf("%c", car);
             else
                 printf(".");
         }
@@ -770,7 +770,7 @@ void ldh(TMaquinaVirtual *mv){          //PARA LDH, SOLO SE CARGAN COSAS SI SE T
     int aux_op1, aux_op2;
 
 
-    if ((mv->registros[5] & 0x01000000 == 0x01000000) && (mv->registros[5] & 0b11000000 == 0b11000000) || (mv->registros[5] & 0x03000000 == 0x03000000) && (mv->registros[5] & 0x110000 == 0x110000)){
+    if (((mv->registros[5] & 0x01000000) == 0x01000000) && ((mv->registros[5] & 0b11000000) == 0) || ((mv->registros[5] & 0x03000000) == 0x03000000) && ((mv->registros[5] & 0xC00000) == 0)){
         aux_op1 = get(mv, OP1);
         aux_op2 = get(mv, OP2);
         aux_op1 &= 0xFFFF;
@@ -1170,7 +1170,7 @@ void carga_programa(TMaquinaVirtual *mv, TRegComandos comandos){
     FILE *arch;
     unsigned short int celda=0, tam, pos_base;
     char byte, aux_indice;
-    unsigned char tam_aux, i;
+    unsigned char tam_aux;
     THeaderVMX header;
     int sum_tam=0;
 
@@ -1190,16 +1190,23 @@ void carga_programa(TMaquinaVirtual *mv, TRegComandos comandos){
         header.tam_segmentos[0] = tam;
         sum_tam += tam;
         if (header.version == 2){
-            i = 1;
-            while (i < CANT_SEGMENTOS-1){
+            for (int i = 1; i < CANT_SEGMENTOS-1; i++){
                 fread(&tam, 1, 1, arch);
                 tam <<= 8;
                 fread(&tam_aux, 1, 1, arch);
                 tam |= tam_aux;
-                header.tam_segmentos[i++] = tam;
+                header.tam_segmentos[i] = tam;
                 sum_tam += tam;
             }
-            fread(&header.offset_entry, sizeof(header.offset_entry), 1, arch);
+            fread(&header.offset_entry, 1, 1, arch);
+            header.offset_entry <<= 8;
+            fread(&tam_aux, 1, 1, arch);
+            header.offset_entry |= tam_aux;
+        }
+        else{
+            header.tam_segmentos[1] = comandos.tam_memoria - header.tam_segmentos[0];
+            for (int i = 2; i < CANT_SEGMENTOS-1; i++)
+                header.tam_segmentos[i] = 0;
         }
 
         if (!strcmp(header.identificador, "VMX25") && sum_tam <= comandos.tam_memoria){
@@ -1348,6 +1355,9 @@ int main(int argc, char *argv[]){
     carga_nombres_registros(nom_reg);
 
     procesa_comandos(argc, argv, &comandos, &maquina_virtual);
+    //strcpy(comandos.arch_fuente, "sample1.vmx");
+    //comandos.d = 1;
+    //comandos.tam_memoria = MEM_DEFAULT;
 
     if (strlen(comandos.arch_fuente))
         carga_programa(&maquina_virtual, comandos);
@@ -1359,7 +1369,7 @@ int main(int argc, char *argv[]){
     }
 
     if (maquina_virtual.registros[3] != -1 && !maquina_virtual.cod_error){
-        dir_entry = maquina_virtual.registros[3];
+        dir_entry = maquina_virtual.tabla_segmentos[shr(maquina_virtual.registros[3], 16)].base + maquina_virtual.registros[3] & 0xFFFF;
         maquina_virtual.debugger = 0;
         strcpy(maquina_virtual.arch_img, comandos.arch_img);
         maquina_virtual.tam_memoria = comandos.tam_memoria;
